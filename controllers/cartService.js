@@ -57,15 +57,6 @@ exports.addProductToCart = asyncHandler(async (req, res, next) => {
       products: [{ product: productId, color, price: product.price }],
     });
   }
-  // let totalPrice = 0;
-  // cart.products.forEach((prod) => {
-  //   totalPrice += prod.price * prod.count;
-  // });
-
-  // cart.totalCartPrice = totalPrice;
-  // await cart.save();
-
-  // Calculate total cart price
   await calcTotalCartPrice(cart);
 
   return res.status(200).json({
