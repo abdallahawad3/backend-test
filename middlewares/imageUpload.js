@@ -1,30 +1,9 @@
-// const multer = require('multer');
-
-// const ApiError = require('../utils/apiError');
-
-// // Upload single image => method return multer middleware
-// exports.uploadSingleImage = (fieldName) => {
-//   // Storage
-//   const multerStorage = multer.memoryStorage();
-
-//   // Accept only images
-//   const multerFilter = (req, file, cb) => {
-//     if (file.mimetype.startsWith('image')) {
-//       cb(null, true);
-//     } else {
-//       cb(new ApiError('only images allowed', 400), false);
-//     }
-//   };
-
-//   const upload = multer({ storage: multerStorage, fileFilter: multerFilter });
-
-//   return upload.single(fieldName);
-// };
 const multer = require('multer');
 
-// Use memory storage because sharp needs buffer
+// Use memory storage for direct Cloudinary upload
 const storage = multer.memoryStorage();
 
+// Accept only images
 const fileFilter = (req, file, cb) => {
   if (file.mimetype.startsWith('image')) {
     cb(null, true);
@@ -33,5 +12,17 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Utility to create a single image uploader
-exports.uploadSingleImage = (fieldName) => multer({ storage, fileFilter }).single(fieldName);
+const upload = multer({ storage, fileFilter });
+
+// For uploading a single image
+exports.uploadSingleImage = (fieldName) => upload.single(fieldName);
+
+// For uploading multiple images (same field)
+exports.uploadMultipleImages = (fieldName, maxCount = 5) =>
+  upload.array(fieldName, maxCount);
+
+// For uploading fields like imageCover (1), images (multiple)
+exports.uploadMixedImages = (fieldsConfig = [
+  { name: 'imageCover', maxCount: 1 },
+  { name: 'images', maxCount: 5 }
+]) => upload.fields(fieldsConfig);

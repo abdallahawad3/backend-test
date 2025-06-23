@@ -5,10 +5,10 @@ const {
   getBrand,
   updateBrand,
   deleteBrand,
-  uploadBrandImage,
   resizeImage,
   deleteAll,
 } = require('../controllers/brandController');
+
 const {
   createBrandValidator,
   getBrandValidator,
@@ -17,6 +17,7 @@ const {
 } = require('../utils/validators/brandValidator');
 
 const authController = require('../controllers/authController');
+const { uploadSingleImage } = require('../middlewares/imageUpload');
 
 const router = express.Router();
 
@@ -26,21 +27,20 @@ router
   .post(
     authController.auth,
     authController.allowedTo('admin', 'manager'),
-    uploadBrandImage,
+    uploadSingleImage('image'),
     resizeImage,
     createBrandValidator,
     createBrand
   )
   .delete(deleteAll);
 
-// router.use(idValidation);
 router
   .route('/:id')
   .get(getBrandValidator, getBrand)
   .put(
     authController.auth,
     authController.allowedTo('admin', 'manager'),
-    uploadBrandImage,
+    uploadSingleImage('image'),
     resizeImage,
     updateBrandValidator,
     updateBrand

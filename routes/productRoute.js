@@ -5,9 +5,9 @@ const {
   createProduct,
   updateProduct,
   deleteProduct,
-  uploadProductImages,
   resizeProductImages,
 } = require('../controllers/productController');
+
 const {
   createProductValidator,
   getProductValidator,
@@ -17,34 +17,40 @@ const {
 
 const authController = require('../controllers/authController');
 const reviewRoute = require('./reviewRoute');
+const { uploadMixedImages } = require('../middlewares/imageUpload');
 
 const router = express.Router();
 
-// POST  /products/n1b1213ga2/reviews
-// GET   /products/n1b1213ga2/reviews
-// GET   /products/n1b1213ga2/reviews/jjh132hh4
+// Nested routes for product reviews
 router.use('/:productId/reviews', reviewRoute);
 
+// Route: /api/v1/products/
 router
   .route('/')
   .get(getProducts)
   .post(
     authController.auth,
     authController.allowedTo('admin', 'manager'),
-    uploadProductImages,
+    uploadMixedImages([
+      { name: 'imageCover', maxCount: 1 },
+      { name: 'images', maxCount: 5 }
+    ]),
     resizeProductImages,
     createProductValidator,
     createProduct
   );
 
-// router.use(idValidation);
+// Route: /api/v1/products/:id
 router
   .route('/:id')
   .get(getProductValidator, getProduct)
   .put(
     authController.auth,
     authController.allowedTo('admin', 'manager'),
-    uploadProductImages,
+    uploadMixedImages([
+      { name: 'imageCover', maxCount: 1 },
+      { name: 'images', maxCount: 5 }
+    ]),
     resizeProductImages,
     updateProductValidator,
     updateProduct
