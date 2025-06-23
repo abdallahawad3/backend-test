@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// Configure strictQuery to avoid deprecation warning
+mongoose.set('strictQuery', true); // or false
+
 // Connect to db
 const dbConnection = () => {
   mongoose
