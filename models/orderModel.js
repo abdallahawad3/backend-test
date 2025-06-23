@@ -1,8 +1,5 @@
 const mongoose = require('mongoose');
-const autoIncrement = require('mongoose-sequence')(mongoose);
-
-const connection = mongoose.createConnection(process.env.DB_URI);
-autoIncrement.initialize(connection);
+const AutoIncrement = require('mongoose-sequence')(mongoose);
 
 const orderSchema = new mongoose.Schema(
   {
@@ -56,6 +53,7 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Auto-populate
 orderSchema.pre(/^find/, function (next) {
   this.populate({
     path: 'user',
@@ -68,11 +66,10 @@ orderSchema.pre(/^find/, function (next) {
   next();
 });
 
-orderSchema.plugin(autoIncrement.plugin, {
-  model: 'Order',
-  field: 'id',
-  startAt: 1,
-  incrementBy: 1,
+// ✅ Correct way to use mongoose-sequence
+orderSchema.plugin(AutoIncrement, {
+  inc_field: 'orderId', // This will be your auto-increment field
+  start_seq: 1,
 });
 
 module.exports = mongoose.model('Order', orderSchema);
