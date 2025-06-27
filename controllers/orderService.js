@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
 const ApiError = require('../utils/apiError');
 const factory = require('./handlersFactory');
 const User = require('../models/userModel');
@@ -16,7 +17,7 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
   const shippingPrice = 0;
 
   // 1) Get logged user cart
-  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
+  const cart = await Cart.findById(req.params.cartId);
   if (!cart) {
     return next(
       new ApiError(`There is no cart for this user :${req.user._id}`, 404)
@@ -52,8 +53,7 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
     await Cart.findByIdAndDelete(req.params.cartId);
   }
 
-  // Success response for cash order creation
-  res.status(201).json({ status: 'success', message: 'Cash order created successfully', data: order });
+  res.status(201).json({ status: 'success', data: order });
 });
 
 // @desc    Get Specific order
@@ -87,10 +87,8 @@ exports.updateOrderToPaid = asyncHandler(async (req, res, next) => {
   order.paidAt = Date.now();
 
   const updatedOrder = await order.save();
-  // Success response
   res.status(200).json({
     status: 'Success',
-    message: 'Order status updated to paid successfully',
     data: updatedOrder,
   });
 });
@@ -111,8 +109,7 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
   order.deliveredAt = Date.now();
 
   const updatedOrder = await order.save();
-  // Success response
-  res.status(200).json({ status: 'Success', message: 'Order status updated to delivered successfully', data: updatedOrder });
+  res.status(200).json({ status: 'Success', data: updatedOrder });
 });
 
 // @desc    Create order checkout session
@@ -120,7 +117,7 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
 // @access  Private/User
 exports.checkoutSession = asyncHandler(async (req, res, next) => {
   // 1) Get the currently cart
-  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
+  const cart = await Cart.findById(req.params.cartId);
   if (!cart) {
     return next(
       new ApiError(`There is no cart for this user :${req.user._id}`, 404)
@@ -136,52 +133,42 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
   const session = await stripe.checkout.sessions.create({
     line_items: [
       {
-        price_data: {
-          currency: 'egp',
-          unit_amount: cartPrice * 100,
-          product_data: {
-            name: req.user.name || 'User Order',
-            description: `Order from ${req.user.email} for ${cart.products.length} items`,
-          },
-        },
+        name: req.user.name,
+        amount: cartPrice * 100,
+        currency: 'egp',
         quantity: 1,
       },
     ],
     mode: 'payment',
     success_url: `https://graduation-project-v01.netlify.app/user/orders`,
+    // success_url: `http://localhost:3000/user/allorders`,
     cancel_url: `https://graduation-project-v01.netlify.app/cart`,
+    // cancel_url: `http://localhost:3000/cart`,
     customer_email: req.user.email,
     client_reference_id: req.params.cartId,
-    metadata: {
-      address: req.body.shippingAddress.details || '',
-      city: req.body.shippingAddress.alias || '',
-    },
+    metadata: req.body.shippingAddress,
   });
+
+  // res.redirect(303, session.url);
+
   // 3) Create session as response
-  // Success response for checkout session creation
   res.status(200).json({
     status: 'success',
-    message: 'Checkout session created successfully',
     session,
   });
 });
 
 const createOrderCheckout = async (session) => {
-  console.log('--- createOrderCheckout started ---');
+  // 1) Get needed data from session
   const cartId = session.client_reference_id;
-  const checkoutAmount = session.amount_total / 100;
+  const checkoutAmount = session.display_items[0].amount / 100;
   const shippingAddress = session.metadata;
 
-  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
-  if (!cart) {
-    throw new Error(`Cart not found for cartId: ${cartId}`);
-  }
-
+  // 2) Get Cart and User
+  const cart = await Cart.findById(cartId);
   const user = await User.findOne({ email: session.customer_email });
-  if (!user) {
-    throw new Error(`User not found for email: ${session.customer_email}`);
-  }
 
+  //3) Create order
   const order = await Order.create({
     user: user._id,
     cartItems: cart.products,
@@ -192,20 +179,21 @@ const createOrderCheckout = async (session) => {
     paidAt: Date.now(),
   });
 
-  console.log('Order created successfully:', order._id);
+  // 4) After creating order decrement product quantity, increment sold
+  // Performs multiple write operations with controls for order of execution.
+  if (order) {
+    const bulkOption = cart.products.map((item) => ({
+      updateOne: {
+        filter: { _id: item.product },
+        update: { $inc: { quantity: -item.count, sold: +item.count } },
+      },
+    }));
 
-  const bulkOption = cart.products.map((item) => ({
-    updateOne: {
-      filter: { _id: item.product },
-      update: { $inc: { quantity: -item.count, sold: +item.count } },
-    },
-  }));
+    await Product.bulkWrite(bulkOption, {});
 
-  await Product.bulkWrite(bulkOption, {});
-  console.log('Product quantities updated successfully.');
-
-  await Cart.findByIdAndDelete(cart._id);
-  console.log(`Cart cleared successfully for cartId: ${cart._id}.`);
+    // 5) Clear cart
+    await Cart.findByIdAndDelete(cart._id);
+  }
 };
 
 // @desc    This webhook will run when stipe payment successfully paid
@@ -221,22 +209,12 @@ exports.webhookCheckout = (req, res, next) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error(`Webhook signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
-    createOrderCheckout(event.data.object)
-      .then(() => {
-        console.log('Order creation and cart clearing completed');
-        res.status(200).json({ received: true });
-      })
-      .catch((error) => {
-        console.error('Error in createOrderCheckout:', error);
-        res.status(500).send(`Webhook processing error: ${error.message}`);
-      });
-  } else {
-    console.log(`Unhandled event type ${event.type}`);
-    res.status(200).json({ received: true });
+    createOrderCheckout(event.data.object);
   }
+
+  res.status(200).json({ received: true });
 };
