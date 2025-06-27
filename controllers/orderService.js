@@ -198,6 +198,7 @@ const createOrderCheckout = async (sessionId) => {
 };
 
 
+
 // @desc    This webhook will run when stipe payment successfully paid
 // @route   PUT /webhook-checkout
 // @access  From stripe
@@ -217,11 +218,19 @@ exports.webhookCheckout = async (req, res, next) => {
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const sessionId = event.data.object.id;
-    await createOrderCheckout(sessionId);
+  // تعامل فقط مع الحدث الذي يهمنا
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const sessionId = event.data.object.id; // ✅ الآن مسموح
+      await createOrderCheckout(sessionId);
+      break;
+    }
+    default: {
+      console.log(`Unhandled event type ${event.type}`);
+      break;
+    }
   }
+
 
   res.status(200).json({ received: true });
 };
-
