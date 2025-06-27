@@ -158,17 +158,22 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
   });
 });
 
-const createOrderCheckout = async (session) => {
-  // 1) Get needed data from session
-  const cartId = session.client_reference_id;
-  const checkoutAmount = session.display_items[0].amount / 100;
-  const shippingAddress = session.metadata;
+const createOrderCheckout = async (sessionId) => {
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-  // 2) Get Cart and User
+  const cartId = session.client_reference_id;
+  const checkoutAmount = session.amount_total / 100;
+
+  const shippingAddress = {
+    country: (session.metadata && session.metadata.country) ? session.metadata.country : '',
+    city: (session.metadata && session.metadata.city) ? session.metadata.city : '',
+    address: (session.metadata && session.metadata.address) ? session.metadata.address : '',
+    details: (session.metadata && session.metadata.details) ? session.metadata.details : '',
+  };
+
   const cart = await Cart.findById(cartId);
   const user = await User.findOne({ email: session.customer_email });
 
-  //3) Create order
   const order = await Order.create({
     user: user._id,
     cartItems: cart.products,
@@ -179,8 +184,6 @@ const createOrderCheckout = async (session) => {
     paidAt: Date.now(),
   });
 
-  // 4) After creating order decrement product quantity, increment sold
-  // Performs multiple write operations with controls for order of execution.
   if (order) {
     const bulkOption = cart.products.map((item) => ({
       updateOne: {
@@ -190,17 +193,19 @@ const createOrderCheckout = async (session) => {
     }));
 
     await Product.bulkWrite(bulkOption, {});
-
-    // 5) Clear cart
     await Cart.findByIdAndDelete(cart._id);
   }
 };
 
+
 // @desc    This webhook will run when stipe payment successfully paid
 // @route   PUT /webhook-checkout
 // @access  From stripe
-exports.webhookCheckout = (req, res, next) => {
-  const signature = req.headers['stripe-signature'].toString();
+exports.webhookCheckout = async (req, res, next) => {
+  const signature = req.headers['stripe-signature']
+    ? req.headers['stripe-signature'].toString()
+    : undefined;
+
   let event;
   try {
     event = stripe.webhooks.constructEvent(
@@ -213,8 +218,10 @@ exports.webhookCheckout = (req, res, next) => {
   }
 
   if (event.type === 'checkout.session.completed') {
-    createOrderCheckout(event.data.object);
+    const sessionId = event.data.object.id;
+    await createOrderCheckout(sessionId);
   }
 
   res.status(200).json({ received: true });
 };
+
