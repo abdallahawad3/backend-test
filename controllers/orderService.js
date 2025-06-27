@@ -11,27 +11,33 @@ const Order = require('../models/orderModel');
 // @route   POST /api/orders/cartId
 // @access  Private/Protected/User
 exports.createCashOrder = asyncHandler(async (req, res, next) => {
+  // app settings
   const taxPrice = 0;
   const shippingPrice = 0;
 
-  console.log('Creating cash order for cartId:', req.params.cartId);
-  const cart = await Cart.findById(req.params.cartId);
+  // 1) Get logged user cart
+  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
   if (!cart) {
-    console.error('Cart not found for cartId:', req.params.cartId);
-    return next(new ApiError(`There is no cart for this user: ${req.user._id}`, 404));
+    return next(
+      new ApiError(`There is no cart for this user :${req.user._id}`, 404)
+    );
   }
 
-  const cartPrice = cart.totalAfterDiscount ? cart.totalAfterDiscount : cart.totalCartPrice;
-  console.log('Cart price:', cartPrice, 'Shipping address:', req.body.shippingAddress);
+  // 2) Check if there is coupon apply
+  const cartPrice = cart.totalAfterDiscount
+    ? cart.totalAfterDiscount
+    : cart.totalCartPrice;
 
+  // 3) Create order with default cash option
   const order = await Order.create({
     user: req.user._id,
     cartItems: cart.products,
     shippingAddress: req.body.shippingAddress,
     totalOrderPrice: taxPrice + shippingPrice + cartPrice,
   });
-  console.log('Order created:', order._id);
 
+  // 4) After creating order decrement product quantity, increment sold
+  // Performs multiple write operations with controls for order of execution.
   if (order) {
     const bulkOption = cart.products.map((item) => ({
       updateOne: {
@@ -39,13 +45,14 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
         update: { $inc: { quantity: -item.count, sold: +item.count } },
       },
     }));
-    await Product.bulkWrite(bulkOption, {});
-    console.log('Product quantities updated');
 
+    await Product.bulkWrite(bulkOption, {});
+
+    // 5) Clear cart
     await Cart.findByIdAndDelete(req.params.cartId);
-    console.log('Cart deleted:', req.params.cartId);
   }
 
+  // Success response for cash order creation
   res.status(201).json({ status: 'success', message: 'Cash order created successfully', data: order });
 });
 
@@ -113,7 +120,7 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
 // @access  Private/User
 exports.checkoutSession = asyncHandler(async (req, res, next) => {
   // 1) Get the currently cart
-  const cart = await Cart.findById({ _id: "685c20d8fb69c7b88ddcc2b6" });
+  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
   if (!cart) {
     return next(
       new ApiError(`There is no cart for this user :${req.user._id}`, 404)
@@ -165,7 +172,7 @@ const createOrderCheckout = async (session) => {
   const checkoutAmount = session.amount_total / 100;
   const shippingAddress = session.metadata;
 
-  const cart = await Cart.findById(cartId);
+  const cart = await Cart.findById({ _id: "685ebb17f084679e6fed7e1d" });
   if (!cart) {
     throw new Error(`Cart not found for cartId: ${cartId}`);
   }
