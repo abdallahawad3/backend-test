@@ -47,8 +47,6 @@ exports.addProductToCart = asyncHandler(async (req, res, next) => {
       //product does not exists in cart, add new item
       cart.products.push({ product: productId, color, price: product.price });
     }
-    // cart = await cart.save();
-    // return res.status(201).send(cart);
   }
   if (!cart) {
     //no cart for user, create new cart
@@ -59,7 +57,8 @@ exports.addProductToCart = asyncHandler(async (req, res, next) => {
   }
   await calcTotalCartPrice(cart);
 
-  return res.status(200).json({
+  // Success response
+  res.status(200).json({
     status: 'success',
     message: 'Product added successfully to your cart',
     numOfCartItems: cart.products.length,
@@ -108,7 +107,8 @@ exports.updateCartProductCount = asyncHandler(async (req, res, next) => {
   // Calculate total cart price
   await calcTotalCartPrice(cart);
 
-  return res.status(200).json({
+  // Success response
+  res.status(200).json({
     status: 'success',
     numOfCartItems: cart.products.length,
     data: cart,
@@ -136,7 +136,8 @@ exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
       new ApiError(`No cart exist for this user: ${req.user._id}`, 404)
     );
   }
-  return res.status(200).json({
+  // Success response
+  res.status(200).json({
     status: 'success',
     numOfCartItems: cart.products.length,
     data: cart,
@@ -174,7 +175,8 @@ exports.removeCartProduct = asyncHandler(async (req, res, next) => {
 
   await calcTotalCartPrice(cart);
 
-  return res.status(200).json({
+  // Success response
+  res.status(200).json({
     status: 'success',
     numOfCartItems: cart.products.length,
     data: cart,
@@ -188,7 +190,8 @@ exports.removeCartProduct = asyncHandler(async (req, res, next) => {
 exports.clearLoggedUserCart = asyncHandler(async (req, res, next) => {
   await Cart.findOneAndDelete({ cartOwner: req.user._id });
 
-  res.status(204).send();
+  // Success response
+  res.status(204).send(); // 204 No Content for successful deletion
 });
 
 // @desc      Apply coupon logged user cart
@@ -235,12 +238,11 @@ exports.applyCouponToCart = asyncHandler(async (req, res, next) => {
 
   await cart.save();
 
-  return res.status(200).json({
+  // Success response
+  res.status(200).json({
     status: 'success',
     numOfCartItems: cart.products.length,
     coupon: coupon.name,
     data: cart,
   });
 });
-
-// update cartItem quantity

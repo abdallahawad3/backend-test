@@ -53,7 +53,8 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
     await Cart.findByIdAndDelete(req.params.cartId);
   }
 
-  res.status(201).json({ status: 'success', data: order });
+  // Success response for cash order creation
+  res.status(201).json({ status: 'success', message: 'Cash order created successfully', data: order });
 });
 
 // @desc    Get Specific order
@@ -87,8 +88,10 @@ exports.updateOrderToPaid = asyncHandler(async (req, res, next) => {
   order.paidAt = Date.now();
 
   const updatedOrder = await order.save();
+  // Success response
   res.status(200).json({
     status: 'Success',
+    message: 'Order status updated to paid successfully',
     data: updatedOrder,
   });
 });
@@ -109,7 +112,8 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
   order.deliveredAt = Date.now();
 
   const updatedOrder = await order.save();
-  res.status(200).json({ status: 'Success', data: updatedOrder });
+  // Success response
+  res.status(200).json({ status: 'Success', message: 'Order status updated to delivered successfully', data: updatedOrder });
 });
 
 // @desc    Create order checkout session
@@ -150,8 +154,10 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
   // res.redirect(303, session.url);
 
   // 3) Create session as response
+  // Success response for checkout session creation
   res.status(200).json({
     status: 'success',
+    message: 'Checkout session created successfully',
     session,
   });
 });
@@ -159,12 +165,19 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
 const createOrderCheckout = async (session) => {
   // 1) Get needed data from session
   const cartId = session.client_reference_id;
-  const checkoutAmount = session.display_items[0].amount / 100;
+  // Use session.amount_total directly as it's the total amount
+  const checkoutAmount = session.amount_total / 100;
   const shippingAddress = session.metadata;
 
   // 2) Get Cart and User
   const cart = await Cart.findById(cartId);
   const user = await User.findOne({ email: session.customer_email });
+
+  // Guard clause if cart or user not found, although ideally this shouldn't happen after a successful Stripe session
+  if (!cart || !user) {
+    console.error('Error in createOrderCheckout: Cart or User not found for session:', session);
+    return; // Or throw an error to be caught by a more robust webhook handler
+  }
 
   //3) Create order
   const order = await Order.create({
@@ -207,12 +220,17 @@ exports.webhookCheckout = (req, res, next) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
+    console.error(`Webhook signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
-    createOrderCheckout(event.data.object);
+    // Await the asynchronous function call here
+    createOrderCheckout(event.data.object)
+      .then(() => console.log('Order created and cart cleared successfully via webhook.'))
+      .catch((error) => console.error('Error processing webhook checkout:', error));
   }
 
+  // Always respond with 200 to Stripe to acknowledge receipt of the event
   res.status(200).json({ received: true });
 };
