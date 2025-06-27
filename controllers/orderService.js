@@ -153,8 +153,8 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
     customer_email: req.user.email,
     client_reference_id: req.params.cartId,
     metadata: {
-      address: req.body.shippingAddress.address || '',
-      city: req.body.shippingAddress.city || '',
+      address: req.body.shippingAddress.details || '',
+      city: req.body.shippingAddress.alias || '',
     },
   });
   // 3) Create session as response
