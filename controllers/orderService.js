@@ -1,6 +1,5 @@
 const asyncHandler = require('express-async-handler');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
 const ApiError = require('../utils/apiError');
 const factory = require('./handlersFactory');
 const User = require('../models/userModel');
@@ -12,33 +11,27 @@ const Order = require('../models/orderModel');
 // @route   POST /api/orders/cartId
 // @access  Private/Protected/User
 exports.createCashOrder = asyncHandler(async (req, res, next) => {
-  // app settings
   const taxPrice = 0;
   const shippingPrice = 0;
 
-  // 1) Get logged user cart
+  console.log('Creating cash order for cartId:', req.params.cartId);
   const cart = await Cart.findById(req.params.cartId);
   if (!cart) {
-    return next(
-      new ApiError(`There is no cart for this user :${req.user._id}`, 404)
-    );
+    console.error('Cart not found for cartId:', req.params.cartId);
+    return next(new ApiError(`There is no cart for this user: ${req.user._id}`, 404));
   }
 
-  // 2) Check if there is coupon apply
-  const cartPrice = cart.totalAfterDiscount
-    ? cart.totalAfterDiscount
-    : cart.totalCartPrice;
+  const cartPrice = cart.totalAfterDiscount ? cart.totalAfterDiscount : cart.totalCartPrice;
+  console.log('Cart price:', cartPrice, 'Shipping address:', req.body.shippingAddress);
 
-  // 3) Create order with default cash option
   const order = await Order.create({
     user: req.user._id,
     cartItems: cart.products,
     shippingAddress: req.body.shippingAddress,
     totalOrderPrice: taxPrice + shippingPrice + cartPrice,
   });
+  console.log('Order created:', order._id);
 
-  // 4) After creating order decrement product quantity, increment sold
-  // Performs multiple write operations with controls for order of execution.
   if (order) {
     const bulkOption = cart.products.map((item) => ({
       updateOne: {
@@ -46,14 +39,13 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
         update: { $inc: { quantity: -item.count, sold: +item.count } },
       },
     }));
-
     await Product.bulkWrite(bulkOption, {});
+    console.log('Product quantities updated');
 
-    // 5) Clear cart
     await Cart.findByIdAndDelete(req.params.cartId);
+    console.log('Cart deleted:', req.params.cartId);
   }
 
-  // Success response for cash order creation
   res.status(201).json({ status: 'success', message: 'Cash order created successfully', data: order });
 });
 
@@ -121,7 +113,7 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
 // @access  Private/User
 exports.checkoutSession = asyncHandler(async (req, res, next) => {
   // 1) Get the currently cart
-  const cart = await Cart.findById(req.params.cartId);
+  const cart = await Cart.findById({ _id: "685c20d8fb69c7b88ddcc2b6" });
   if (!cart) {
     return next(
       new ApiError(`There is no cart for this user :${req.user._id}`, 404)
@@ -139,9 +131,9 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
       {
         price_data: {
           currency: 'egp',
-          unit_amount: cartPrice * 100, // Amount in cents
+          unit_amount: cartPrice * 100,
           product_data: {
-            name: req.user.name || 'User Order', // Provide a meaningful name for the product
+            name: req.user.name || 'User Order',
             description: `Order from ${req.user.email} for ${cart.products.length} items`,
           },
         },
@@ -153,9 +145,11 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
     cancel_url: `https://graduation-project-v01.netlify.app/cart`,
     customer_email: req.user.email,
     client_reference_id: req.params.cartId,
-    metadata: req.body.shippingAddress,
+    metadata: {
+      address: req.body.shippingAddress.address || '',
+      city: req.body.shippingAddress.city || '',
+    },
   });
-
   // 3) Create session as response
   // Success response for checkout session creation
   res.status(200).json({
@@ -167,69 +161,44 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
 
 const createOrderCheckout = async (session) => {
   console.log('--- createOrderCheckout started ---');
-  console.log('Stripe Session received:', JSON.stringify(session, null, 2));
-
-  // 1) Get needed data from session
   const cartId = session.client_reference_id;
-  // Use session.amount_total directly as it's the total amount
   const checkoutAmount = session.amount_total / 100;
-  // Make sure metadata is an object, not just a string, if you're sending multiple fields
   const shippingAddress = session.metadata;
 
-  console.log(`Extracted: cartId=${cartId}, checkoutAmount=${checkoutAmount}, shippingAddress=${JSON.stringify(shippingAddress)}`);
-
-  // 2) Get Cart and User
   const cart = await Cart.findById(cartId);
-  const user = await User.findOne({ email: session.customer_email });
-
   if (!cart) {
-    console.error('Error in createOrderCheckout: Cart not found for cartId:', cartId);
-    return; // Stop execution if cart is not found
+    throw new Error(`Cart not found for cartId: ${cartId}`);
   }
+
+  const user = await User.findOne({ email: session.customer_email });
   if (!user) {
-    console.error('Error in createOrderCheckout: User not found for email:', session.customer_email);
-    return; // Stop execution if user is not found
+    throw new Error(`User not found for email: ${session.customer_email}`);
   }
 
-  console.log('Cart and User found. Proceeding with order creation.');
+  const order = await Order.create({
+    user: user._id,
+    cartItems: cart.products,
+    shippingAddress,
+    totalOrderPrice: checkoutAmount,
+    paymentMethodType: 'card',
+    isPaid: true,
+    paidAt: Date.now(),
+  });
 
-  //3) Create order
-  try {
-    const order = await Order.create({
-      user: user._id,
-      cartItems: cart.products,
-      shippingAddress,
-      totalOrderPrice: checkoutAmount,
-      paymentMethodType: 'card',
-      isPaid: true,
-      paidAt: Date.now(),
-    });
+  console.log('Order created successfully:', order._id);
 
-    console.log('Order created successfully:', order._id);
+  const bulkOption = cart.products.map((item) => ({
+    updateOne: {
+      filter: { _id: item.product },
+      update: { $inc: { quantity: -item.count, sold: +item.count } },
+    },
+  }));
 
-    // 4) After creating order decrement product quantity, increment sold
-    if (order) {
-      const bulkOption = cart.products.map((item) => ({
-        updateOne: {
-          filter: { _id: item.product },
-          update: { $inc: { quantity: -item.count, sold: +item.count } },
-        },
-      }));
+  await Product.bulkWrite(bulkOption, {});
+  console.log('Product quantities updated successfully.');
 
-      await Product.bulkWrite(bulkOption, {});
-      console.log('Product quantities updated successfully.');
-
-      // 5) Clear cart
-      await Cart.findByIdAndDelete(cart._id);
-      console.log(`Cart cleared successfully for cartId: ${cart._id}.`);
-    } else {
-      console.error('Order object is null after creation attempt, skipping product updates and cart clear.');
-    }
-  } catch (err) {
-    console.error('Error creating order in createOrderCheckout:', err);
-    // Potentially rethrow or log to a more persistent error tracking system
-  }
-  console.log('--- createOrderCheckout finished ---');
+  await Cart.findByIdAndDelete(cart._id);
+  console.log(`Cart cleared successfully for cartId: ${cart._id}.`);
 };
 
 // @desc    This webhook will run when stipe payment successfully paid
@@ -246,22 +215,21 @@ exports.webhookCheckout = (req, res, next) => {
     );
   } catch (err) {
     console.error(`Webhook signature verification failed: ${err.message}`);
-    // Respond with 400 immediately if signature is invalid
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
-  // Handle the event
   if (event.type === 'checkout.session.completed') {
-    console.log(`Stripe webhook received: ${event.type} event.`);
-    // Await the asynchronous function call here using .then/.catch
     createOrderCheckout(event.data.object)
-      .then(() => console.log('Stripe webhook processed: Order creation and cart clearing initiated successfully.'))
-      .catch((error) => console.error('Error processing webhook checkout (async handler):', error));
+      .then(() => {
+        console.log('Order creation and cart clearing completed');
+        res.status(200).json({ received: true });
+      })
+      .catch((error) => {
+        console.error('Error in createOrderCheckout:', error);
+        res.status(500).send(`Webhook processing error: ${error.message}`);
+      });
   } else {
     console.log(`Unhandled event type ${event.type}`);
+    res.status(200).json({ received: true });
   }
-
-  // Always respond with 200 to Stripe immediately to acknowledge receipt of the event
-  // Stripe expects a 200 OK within a certain timeframe (usually 15 seconds)
-  res.status(200).json({ received: true });
 };
